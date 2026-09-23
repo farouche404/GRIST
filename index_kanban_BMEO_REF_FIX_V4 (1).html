@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kanban BMEO – REF FIX V4</title>
+  <script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+  <style>
+    :root{
+      --border:#e5e7eb; --muted:#667085; --text:#1f2937; --bg:#f7f8fa;
+      --card:#ffffff; --navy:#334155; --soft:#f1f5f9;
+      --shadow:0 6px 22px rgba(15,23,42,.08);
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+    .app{padding:14px;min-height:100vh}
+    .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:12px}
+    select,input,textarea{width:100%;border:1px solid #d6dbe3;border-radius:9px;padding:10px 11px;font:inherit;background:#fff;color:var(--text)}
+    .toolbar select{width:auto;min-width:180px}
+    button{border:0;border-radius:9px;padding:10px 14px;font-weight:700;cursor:pointer}
+    .btn-primary{background:var(--navy);color:#fff}.btn-secondary{background:#fff;border:1px solid var(--border);color:var(--text)}
+    .spacer{flex:1}
+    .board{display:flex;gap:14px;align-items:flex-start;overflow-x:auto;padding-bottom:14px}
+    .column{flex:0 0 310px;background:#eef2f6;border:1px solid #e3e8ef;border-radius:14px;min-height:520px}
+    .column.drag-over{outline:2px dashed #64748b;outline-offset:-5px}
+    .column-header{display:flex;align-items:center;justify-content:space-between;padding:12px 13px 9px;font-weight:800;position:sticky;top:0;background:#eef2f6;z-index:2;border-radius:14px 14px 0 0}
+    .count{min-width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;background:#fff;border:1px solid var(--border);border-radius:999px;font-size:12px;color:var(--muted)}
+    .cards{padding:4px 10px 12px;min-height:460px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:12px;margin:9px 0;padding:11px 12px;box-shadow:0 2px 8px rgba(15,23,42,.05);cursor:pointer;transition:transform .12s ease,box-shadow .12s ease}
+    .card:hover{transform:translateY(-1px);box-shadow:var(--shadow)} .card.dragging{opacity:.45}
+    .service{font-size:12px;font-weight:800;color:#475569;margin-bottom:6px}
+    .description{font-size:14px;font-weight:750;line-height:1.35;margin-bottom:10px}
+    .meta{display:grid;grid-template-columns:1fr;gap:5px;font-size:12px;color:#596579}
+    .meta-row{display:flex;gap:6px;align-items:flex-start}.meta-label{font-weight:750;color:#334155}
+    .empty{color:#8a94a6;font-size:13px;padding:18px 8px;text-align:center}
+    .modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.42);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+    .modal-backdrop.open{display:flex}
+    .modal{width:min(860px,100%);max-height:92vh;overflow:auto;background:#fff;border-radius:18px;box-shadow:0 24px 80px rgba(15,23,42,.25);padding:24px}
+    .modal h2{margin:0 0 14px;font-size:20px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .field{display:flex;flex-direction:column;gap:6px}.field.full{grid-column:1/-1}
+    label{font-size:12px;font-weight:800;color:#667085}textarea{min-height:110px;resize:vertical}
+    .modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:16px}
+    .error{display:none;margin-top:10px;padding:9px 10px;border-radius:8px;background:#fff1f2;color:#be123c;font-size:13px}.error.show{display:block}
+    .choice-box{border:1px solid #d6dbe3;border-radius:12px;padding:10px 12px;min-height:48px;background:#fff;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .choice-pill{display:inline-flex;align-items:center;gap:7px;border:1px solid #d6dbe3;border-radius:999px;padding:7px 11px;font-weight:700;color:#667085;background:#fff;cursor:pointer;user-select:none}
+    .choice-pill:has(input:checked){background:#eef3ff;border-color:#b8c8ff;color:#334155}
+    .choice-pill input{width:18px;height:18px;margin:0;accent-color:#475569}
+    .event-wrap{height:100%;min-height:76px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}
+    .event-wrap input{width:30px;height:30px;accent-color:#475569}
+    .toolbar .btn-primary{white-space:nowrap}
+    .hint{font-size:11px;color:#8a94a6}
+    @media (max-width:700px){.grid{grid-template-columns:1fr}.field.full{grid-column:auto}.toolbar select{min-width:145px}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="toolbar">
+    <select id="serviceFilter"><option value="">Tous les services</option></select>
+    <select id="actorFilter"><option value="">Tous les acteurs</option></select>
+    <button id="resetFilters" class="btn-secondary">Réinitialiser les filtres</button>
+    <div class="spacer"></div>
+    <button id="createAction" class="btn-primary">+ Créer une nouvelle action</button>
+  </div>
+  <div id="board" class="board"></div>
+</div>
+
+<div id="modalBackdrop" class="modal-backdrop">
+  <div class="modal">
+    <h2 id="modalTitle">Modifier l’action</h2>
+    <div class="grid">
+      <div class="field"><label>Service</label><input id="editService" type="text" list="serviceSuggestions" autocomplete="off" placeholder="Rechercher ou sélectionner un service" /><datalist id="serviceSuggestions"></datalist><div class="hint">Commencez à saisir le nom du service pour filtrer les propositions.</div></div>
+      <div class="field"><label>Domaine</label><div id="editDomaineChoices" class="choice-box"></div></div>
+      <div class="field full"><label>Description</label><textarea id="editDescription"></textarea></div>
+      <div class="field"><label>Date de début</label><input id="editDateDebut" type="date" /></div>
+      <div class="field"><label>Date d’échéance</label><input id="editEcheance" type="date" /></div>
+      <div class="field"><label>Priorité</label><select id="editPriorite"></select></div>
+      <div class="field"><label>Statut</label><select id="editStatut"></select></div>
+      <div class="field"><label>Assigné</label><div id="editAssigneChoices" class="choice-box"></div></div>
+      <div class="field"><label>&nbsp;</label><div class="event-wrap"><input id="editEvenement" type="checkbox" /><strong>Événement</strong></div></div>
+      <div class="field full"><label>Commentaire</label><textarea id="editCommentaire"></textarea></div>
+    </div>
+    <div id="modalError" class="error"></div>
+    <div class="modal-actions">
+      <button id="cancelEdit" class="btn-secondary">Annuler</button>
+      <button id="saveEdit" class="btn-primary">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const REQUIRED_COLUMNS = [
+    {name:"Service", title:"Service"},
+    {name:"Assigne", title:"Assigné"},
+    {name:"Description", title:"Description"},
+    {name:"Domaine", title:"Domaine"},
+    {name:"DateDebut", title:"Date de début"},
+    {name:"DateEcheance", title:"Date d’échéance"},
+    {name:"Statut", title:"Statut"},
+    {name:"Priorite", title:"Priorité"},
+    {name:"Evenement", title:"Événement"},
+    {name:"Commentaire", title:"Commentaire"}
+  ];
+  let mappedRecords = [], lastMappings = null, currentRowId = null, currentDragId = null, modalMode = "edit";
+  let peopleChoices = ["David","Yvan","Stéphane","Franck","Mohamed"];
+  let refData = { people: [], domaines: [], services: [] };
+  const $ = id => document.getElementById(id);
+
+  function tableRows(t){
+    if (!t) return [];
+    if (Array.isArray(t)) return t;
+    const ids = Array.isArray(t.id) ? t.id : [];
+    return ids.map((id,i)=>{
+      const r={id};
+      Object.keys(t).forEach(k=>{ if(Array.isArray(t[k])) r[k]=t[k][i]; });
+      return r;
+    });
+  }
+
+  async function loadReferenceData(){
+    try{
+      const [peopleT, domaineT, serviceT] = await Promise.all([
+        grist.docApi.fetchTable("BMEO_identite"),
+        grist.docApi.fetchTable("Domaine"),
+        grist.docApi.fetchTable("REF_service_utilisateur")
+      ]);
+      refData.people = tableRows(peopleT).map(r=>({id:Number(r.id), label:String(r["Prénom"] ?? r.Prenom ?? "").trim()})).filter(x=>x.label);
+      refData.domaines = tableRows(domaineT).map(r=>({id:Number(r.id), label:String(r.Domaine ?? r.Nom ?? r.Name ?? "").trim()})).filter(x=>x.label);
+      refData.services = tableRows(serviceT).map(r=>({id:Number(r.id), label:String(r.Service ?? "").trim()})).filter(x=>x.label);
+      peopleChoices = refData.people.map(x=>x.label);
+      populateServiceSuggestions();
+    }catch(err){
+      console.warn("Chargement des référentiels impossible", err);
+    }
+  }
+
+  function refId(list,label){
+    const s=String(label??"").trim();
+    const hit=list.find(x=>x.label===s);
+    return hit ? hit.id : null;
+  }
+
+  function selectedRefIds(containerId,list){
+    return checkedValues(containerId).map(label=>refId(list,label)).filter(Number.isFinite);
+  }
+
+  function refListForGrist(ids){ return ["L", ...ids.map(Number)]; }
+
+  // Grist attend des IDs de lignes pour les colonnes Reference/Reference List.
+  // On envoie donc les valeurs encodées directement, sans parseStrings.
+  function gristDateValue(iso){
+    if(!iso) return null;
+    const [y,m,d]=iso.split("-").map(Number);
+    return Math.floor(Date.UTC(y,m-1,d)/1000);
+  }
+
+  function selectedIds(containerId,list){
+    return checkedValues(containerId).map(label=>refId(list,label)).filter(id=>Number.isFinite(id));
+  }
+
+
+  function displayValue(v){
+    if (v == null) return "";
+    if (Array.isArray(v)) return v.map(displayValue).filter(Boolean).join(", ");
+    if (typeof v === "object") {
+      if ("displayValue" in v) return displayValue(v.displayValue);
+      if ("label" in v) return displayValue(v.label);
+      if ("value" in v) return displayValue(v.value);
+      return String(v);
+    }
+    return String(v);
+  }
+  function splitPeople(v){
+    const s = displayValue(v).trim();
+    return s ? s.split(/\s*[,;|]\s*/).map(x=>x.trim()).filter(Boolean) : [];
+  }
+
+  function splitMulti(v){
+    if (v == null) return [];
+    if (Array.isArray(v)) {
+      const arr = v.slice();
+      if (arr[0] === "L") arr.shift();
+      return arr.map(displayValue).map(x=>x.trim()).filter(Boolean);
+    }
+    const s = displayValue(v).trim();
+    return s ? s.split(/\s*[,;|]\s*/).map(x=>x.trim()).filter(Boolean) : [];
+  }
+
+  function checkedValues(containerId){
+    return [...$(containerId).querySelectorAll('input[type="checkbox"]:checked')].map(x=>x.value);
+  }
+
+  function renderChecks(containerId, values, selectedValues){
+    const box = $(containerId); box.innerHTML = "";
+    const selected = new Set((selectedValues || []).map(String));
+    values.forEach(value=>{
+      const label=document.createElement("label"); label.className="choice-pill";
+      const input=document.createElement("input"); input.type="checkbox"; input.value=value; input.checked=selected.has(String(value));
+      const span=document.createElement("span"); span.textContent=value;
+      label.append(input,span); box.appendChild(label);
+    });
+  }
+
+  function multiForGrist(values){ return ["L", ...values]; }
+  function normalizeDate(v){
+    if (!v) return "";
+    if (typeof v === "number") return new Date(v*1000).toISOString().slice(0,10);
+    const s = displayValue(v).trim();
+    const iso = s.match(/^(\d{4}-\d{2}-\d{2})/); if (iso) return iso[1];
+    const fr = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/); if (fr) return `${fr[3]}-${fr[2]}-${fr[1]}`;
+    const d = new Date(s); return isNaN(d) ? "" : d.toISOString().slice(0,10);
+  }
+  function formatDate(v){
+    const iso = normalizeDate(v); if (!iso) return "—";
+    const [y,m,d] = iso.split("-"); return `${d}/${m}/${y}`;
+  }
+  function uniqueValues(field){
+    const set = new Set();
+    mappedRecords.forEach(r=>{
+      if(field==="Assigne") splitPeople(r[field]).forEach(x=>set.add(x));
+      else if(field==="Domaine") splitMulti(r[field]).forEach(x=>set.add(x));
+      else { const v=displayValue(r[field]).trim(); if(v) set.add(v); }
+    });
+    return [...set].sort((a,b)=>a.localeCompare(b,"fr",{sensitivity:"base"}));
+  }
+  function setOptions(select, values, firstLabel, selected){
+    select.innerHTML="";
+    if(firstLabel!=null){const o=document.createElement("option");o.value="";o.textContent=firstLabel;select.appendChild(o);}
+    values.forEach(v=>{const o=document.createElement("option");o.value=v;o.textContent=v;select.appendChild(o);});
+    if(selected!=null) select.value=displayValue(selected);
+  }
+  function rebuildFilters(){
+    setOptions($("serviceFilter"),uniqueValues("Service"),"Tous les services",$("serviceFilter").value);
+    setOptions($("actorFilter"),uniqueValues("Assigne"),"Tous les acteurs",$("actorFilter").value);
+  }
+  function filteredRecords(){
+    const service=$("serviceFilter").value, actor=$("actorFilter").value;
+    return mappedRecords.filter(r=>(!service||displayValue(r.Service)===service)&&(!actor||splitPeople(r.Assigne).includes(actor)));
+  }
+  const FIXED_STATUSES = ["À initier", "En cours", "En revue/validation", "Bloqué", "Terminé"];
+  function statuses(){ return FIXED_STATUSES.slice(); }
+  function escapeHtml(s){ return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;"); }
+  function normalizePriority(value){
+    // Les colonnes Choice / ChoiceList de Grist peuvent arriver sous plusieurs
+    // formes : "P1", "P1 - Critique", ["L","P1"], etc.
+    // On extrait donc P1/P2/P3/P4 au lieu d'exiger une égalité stricte.
+    const raw = displayValue(value).trim().toUpperCase();
+    const match = raw.match(/(?:^|[^A-Z0-9])P([1-4])(?:$|[^A-Z0-9])/);
+    if (match) return `P${match[1]}`;
+
+    // Cas compact du type "P1" sans séparateur détecté par sécurité.
+    const compact = raw.match(/P([1-4])/);
+    return compact ? `P${compact[1]}` : "";
+  }
+
+  function priorityColor(value){
+    const p = normalizePriority(value);
+    const colors = {
+      "P1":"#FECBCC",
+      "P2":"#FEE7C3",
+      "P3":"#FFFACD",
+      "P4":"#E1FEDE"
+    };
+    return colors[p] || "#FFFFFF";
+  }
+
+  function cardHtml(r){
+    return `<div class="service">${escapeHtml(displayValue(r.Service)||"Sans service")}</div>
+      <div class="description">${escapeHtml(displayValue(r.Description)||"Sans description")}</div>
+      <div class="meta">
+        <div class="meta-row"><span class="meta-label">Assigné :</span><span>${escapeHtml(displayValue(r.Assigne)||"—")}</span></div>
+        <div class="meta-row"><span class="meta-label">Domaine :</span><span>${escapeHtml(displayValue(r.Domaine)||"—")}</span></div>
+        <div class="meta-row"><span class="meta-label">Échéance :</span><span>${escapeHtml(formatDate(r.DateEcheance))}</span></div>
+      </div>`;
+  }
+  function renderBoard(){
+    const board=$("board"); board.innerHTML="";
+    const records=filteredRecords();
+    const sts=statuses();
+    sts.forEach(status=>{
+      const col=document.createElement("section"); col.className="column"; col.dataset.status=status;
+      const items=records.filter(r=>displayValue(r.Statut)===status);
+      col.innerHTML=`<div class="column-header"><span>${escapeHtml(status)}</span><span class="count">${items.length}</span></div><div class="cards"></div>`;
+      const cards=col.querySelector(".cards");
+      if(!items.length){const e=document.createElement("div");e.className="empty";e.textContent="Aucune action";cards.appendChild(e);}
+      items.forEach(r=>{
+        const card=document.createElement("article"); card.className="card"; card.draggable=true; card.dataset.rowId=r.id; card.innerHTML=cardHtml(r);
+        card.style.backgroundColor = priorityColor(r.Priorite);
+        card.addEventListener("click",()=>openEdit(r.id));
+        card.addEventListener("dragstart",e=>{currentDragId=Number(r.id);card.classList.add("dragging");e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",String(r.id));});
+        card.addEventListener("dragend",()=>{currentDragId=null;card.classList.remove("dragging");document.querySelectorAll(".column").forEach(c=>c.classList.remove("drag-over"));});
+        cards.appendChild(card);
+      });
+      col.addEventListener("dragover",e=>{e.preventDefault();col.classList.add("drag-over");e.dataTransfer.dropEffect="move";});
+      col.addEventListener("dragleave",()=>col.classList.remove("drag-over"));
+      col.addEventListener("drop",async e=>{e.preventDefault();col.classList.remove("drag-over");const id=Number(e.dataTransfer.getData("text/plain")||currentDragId);if(id) await moveCard(id,status);});
+      board.appendChild(col);
+    });
+    if(!sts.length) board.innerHTML='<div class="empty">Aucun statut trouvé.</div>';
+  }
+  async function moveCard(rowId,newStatus){
+    const rec=mappedRecords.find(r=>Number(r.id)===Number(rowId));
+    if(!rec || displayValue(rec.Statut)===newStatus) return;
+
+    // IMPORTANT :
+    // mapColumnNamesBack peut renvoyer aussi les autres colonnes mappées avec
+    // une valeur undefined. Si on les transmet à update(), Grist peut alors
+    // vider ces cellules. Pour un déplacement Kanban, on ne doit envoyer QUE
+    // la colonne Statut.
+    const mapped = grist.mapColumnNamesBack({Statut:newStatus},{mappings:lastMappings}) || {};
+    const fields = {};
+
+    for (const [key, value] of Object.entries(mapped)) {
+      if (key === "id" || value === undefined) continue;
+      fields[key] = value;
+    }
+
+    // Sécurité supplémentaire : un déplacement ne doit jamais mettre à jour
+    // plus d'une colonne.
+    const keys = Object.keys(fields);
+    if (keys.length !== 1) {
+      alert("Déplacement annulé : impossible d'identifier uniquement la colonne Statut.");
+      return;
+    }
+
+    try{
+      await grist.selectedTable.update({id:Number(rowId), fields});
+    }catch(err){
+      alert("Impossible de modifier le statut dans Grist : "+(err?.message||err));
+    }
+  }
+  function populateServiceSuggestions(){
+    const list=$("serviceSuggestions");
+    list.innerHTML="";
+    const services=(refData.services.length?refData.services.map(x=>x.label):uniqueValues("Service"));
+    services.forEach(label=>{
+      const o=document.createElement("option");
+      o.value=label;
+      list.appendChild(o);
+    });
+  }
+
+  function openEdit(rowId){
+    const r=mappedRecords.find(x=>Number(x.id)===Number(rowId)); if(!r) return;
+    modalMode="edit"; currentRowId=Number(rowId); $("modalTitle").textContent="Modifier l’action";
+    populateServiceSuggestions(); $("editService").value=displayValue(r.Service);
+    renderChecks("editDomaineChoices",refData.domaines.length?refData.domaines.map(x=>x.label):uniqueValues("Domaine"),splitMulti(r.Domaine));
+    renderChecks("editAssigneChoices",peopleChoices,splitPeople(r.Assigne));
+    setOptions($("editStatut"),statuses(),null,displayValue(r.Statut));
+    setOptions($("editPriorite"),["P1","P2","P3","P4"],"Choisir une priorité",normalizePriority(r.Priorite));
+    $("editDateDebut").value=normalizeDate(r.DateDebut);
+    $("editEcheance").value=normalizeDate(r.DateEcheance);
+    $("editDescription").value=displayValue(r.Description);
+    $("editCommentaire").value=displayValue(r.Commentaire);
+    $("editEvenement").checked=Boolean(r.Evenement);
+    $("modalError").classList.remove("show"); $("modalBackdrop").classList.add("open");
+  }
+
+  function openCreate(){
+    modalMode="create"; currentRowId=null; $("modalTitle").textContent="Créer une action";
+    populateServiceSuggestions(); $("editService").value="";
+    renderChecks("editDomaineChoices",refData.domaines.length?refData.domaines.map(x=>x.label):uniqueValues("Domaine"),[]);
+    renderChecks("editAssigneChoices",peopleChoices,[]);
+    setOptions($("editStatut"),statuses(),"Choisir un statut","");
+    setOptions($("editPriorite"),["P1","P2","P3","P4"],"Choisir une priorité","");
+    $("editDateDebut").value=""; $("editEcheance").value="";
+    $("editDescription").value=""; $("editCommentaire").value=""; $("editEvenement").checked=false;
+    $("modalError").classList.remove("show"); $("modalBackdrop").classList.add("open");
+  }
+
+  function closeEdit(){ $("modalBackdrop").classList.remove("open"); currentRowId=null; }
+
+  async function saveEdit(){
+    const serviceLabel=$("editService").value;
+    const serviceId=refId(refData.services,serviceLabel);
+    const domaineIds=selectedIds("editDomaineChoices",refData.domaines);
+    const assigneIds=selectedIds("editAssigneChoices",refData.people);
+    const description=$("editDescription").value.trim();
+    const dateDebut=$("editDateDebut").value;
+    const dateEcheance=$("editEcheance").value;
+    const priorite=$("editPriorite").value;
+    const statut=$("editStatut").value;
+
+    const missing=[];
+    if(!Number.isFinite(serviceId)) missing.push("Service");
+    if(!domaineIds.length) missing.push("Domaine");
+    if(!assigneIds.length) missing.push("Assigné");
+    if(!description) missing.push("Description");
+    if(!statut) missing.push("Statut");
+    if(!priorite) missing.push("Priorité");
+    if(!dateDebut) missing.push("Date de début");
+    if(!dateEcheance) missing.push("Date d’échéance");
+    if(missing.length){
+      const e=$("modalError");
+      e.textContent="Champs obligatoires à compléter : "+missing.join(", ")+".";
+      e.classList.add("show");
+      return;
+    }
+
+    const logical={
+      Service:Number(serviceId),
+      Domaine:refListForGrist(domaineIds),
+      Assigne:refListForGrist(assigneIds),
+      Description:description,
+      Statut:statut,
+      Priorite:priorite,
+      DateDebut:gristDateValue(dateDebut),
+      DateEcheance:gristDateValue(dateEcheance),
+      // Facultatifs
+      Commentaire:$("editCommentaire").value.trim(),
+      Evenement:$("editEvenement").checked
+    };
+
+    const fields=grist.mapColumnNamesBack(logical,{mappings:lastMappings}) || {};
+    if(Object.prototype.hasOwnProperty.call(fields,"id")) delete fields.id;
+    Object.keys(fields).forEach(k=>{ if(fields[k]===undefined) delete fields[k]; });
+
+    try{
+      // IMPORTANT : pas de parseStrings ici. Les Reference List sont déjà
+      // encodées au format Grist ["L", id1, id2, ...].
+      if(modalMode==="create") await grist.selectedTable.create({fields});
+      else await grist.selectedTable.update({id:Number(currentRowId),fields});
+      closeEdit();
+    }catch(err){
+      const e=$("modalError");
+      e.textContent="Impossible d’enregistrer dans Grist : "+(err?.message||err);
+      e.classList.add("show");
+    }
+  }
+
+  $("createAction").addEventListener("click",openCreate);
+  $("cancelEdit").addEventListener("click",closeEdit);
+  $("saveEdit").addEventListener("click",saveEdit);
+  $("serviceFilter").addEventListener("change",renderBoard);
+  $("actorFilter").addEventListener("change",renderBoard);
+  $("resetFilters").addEventListener("click",()=>{
+    $("serviceFilter").value="";
+    $("actorFilter").value="";
+    renderBoard();
+  });
+  $("modalBackdrop").addEventListener("click",e=>{if(e.target===$("modalBackdrop"))closeEdit();});
+
+  grist.ready({requiredAccess:"full",allowSelectBy:true,columns:REQUIRED_COLUMNS});
+  loadReferenceData().then(()=>{ rebuildFilters(); renderBoard(); });
+  grist.onRecords((records,mappings)=>{
+    lastMappings=mappings||null;
+    mappedRecords=grist.mapColumnNames(records||[],{mappings})||[];
+    rebuildFilters(); renderBoard();
+  },{format:"rows",keepEncoded:false});
+})();
+</script>
+</body>
+</html>
